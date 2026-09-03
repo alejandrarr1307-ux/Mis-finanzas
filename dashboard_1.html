@@ -57,6 +57,15 @@
   .balance-card .amt.neg{ color:var(--neg); }
   .updated{ text-align:center; font-size:11.5px; color:var(--ink-soft); margin-top:-6px; margin-bottom:16px; }
 
+  .stat-row{ display:flex; gap:12px; margin-bottom:18px; }
+  .stat-card{ flex:1; border-radius:14px; padding:14px 16px; border:1px solid var(--line); }
+  .stat-card.debt{ background:linear-gradient(135deg,#2A1216,#17171C); border-color:#4A2530; }
+  .stat-card.save{ background:linear-gradient(135deg,#0F2A2C,#17171C); border-color:#1F4A4E; }
+  .stat-label{ font-size:12.5px; color:var(--ink-soft); font-weight:600; }
+  .stat-amt{ font-size:21px; font-weight:700; margin-top:4px; font-family:'Space Grotesk'; }
+  .stat-card.debt .stat-amt{ color:var(--tarjeta); }
+  .stat-card.save .stat-amt{ color:var(--nucaj); }
+
   .chips{ display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; margin-bottom:20px; -webkit-overflow-scrolling:touch; }
   .chips::-webkit-scrollbar{ display:none; }
   .chip{ flex:0 0 auto; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; min-width:104px; border-top:3px solid var(--c); }
@@ -117,15 +126,26 @@
       <input id="scriptUrl" placeholder="URL del Apps Script (termina en /exec)">
       <button onclick="loadData()">Cargar datos</button>
     </div>
-    <div class="hint">El ID del Sheet está en la URL, entre /d/ y /edit. El Sheet debe estar compartido como "Cualquier persona con el enlace: Lector".</div>
+    <div class="hint">El ID del Sheet está en la URL, entre /d/ y /edit. El Sheet debe estar compartido como "Cualquier persona con el enlace: Lector". Estos datos se guardan en este navegador para que no tengas que escribirlos cada vez. <a href="#" onclick="forgetConfig();return false;" style="color:var(--gold)">Olvidar datos guardados</a></div>
     <div class="status" id="statusMsg"></div>
   </details>
 
   <div class="balance-card">
-    <div class="label">Disponible total</div>
+    <div class="label">Disponible</div>
     <div class="amt" id="bigBalance">$0</div>
   </div>
   <div class="updated" id="lastUpdate">Sin cargar todavía</div>
+
+  <div class="stat-row">
+    <div class="stat-card debt">
+      <div class="stat-label">💳 Deuda tarjeta</div>
+      <div class="stat-amt" id="cardDebt">$0</div>
+    </div>
+    <div class="stat-card save">
+      <div class="stat-label">🐷 Ahorro cajitas</div>
+      <div class="stat-amt" id="cajitasSave">$0</div>
+    </div>
+  </div>
 
   <div class="chips" id="chipsBox"></div>
 
@@ -204,6 +224,17 @@ function parseCSV(text){
   return rows;
 }
 
+function parseMonto(str){
+  if(!str) return 0;
+  str = String(str).trim();
+  str = str.replace(/[^0-9.,-]/g,'');
+  if(str.includes(',')){
+    // Coma = separador decimal (formato es-CO). Los puntos son de miles, se quitan.
+    str = str.replace(/\./g,'').replace(',', '.');
+  }
+  return parseFloat(str) || 0;
+}
+
 function fmt(n){
   const sign = n < 0 ? '-' : '';
   return sign + '$' + Math.round(Math.abs(n)).toLocaleString('es-CO');
@@ -216,6 +247,7 @@ async function loadData(){
   if(!sheetId){ statusEl.textContent = 'Falta el ID del Sheet.'; return; }
   CONFIG.sheetId = sheetId;
   CONFIG.scriptUrl = scriptUrl;
+  try{ localStorage.setItem('finanzas_sheetId', sheetId); localStorage.setItem('finanzas_scriptUrl', scriptUrl); }catch(e){}
   statusEl.textContent = 'Cargando...';
 
   try{
@@ -226,7 +258,7 @@ async function loadData(){
     const rows = parseCSV(text);
     ROWS = rows.slice(1).filter(r => r.length > 1 && r[0]).map(r => ({
       id: r[0], fecha: r[1], fechaObj: parseFecha(r[1]), tipo: r[2], cuenta: r[3], cuentaDestino: r[4],
-      categoria: r[5], monto: parseFloat((r[6]||'0').replace(/[^0-9.-]/g,'')) || 0, nota: r[7] || ''
+      categoria: r[5], monto: parseMonto(r[6]), nota: r[7] || ''
     }));
     document.getElementById('lastUpdate').textContent = ROWS.length + ' movimientos · actualizado ' + new Date().toLocaleTimeString('es-CO');
     document.getElementById('configBox').open = false;
@@ -279,11 +311,18 @@ function acctBalance(acct){
 }
 
 function renderBigBalance(){
+  const DISPONIBLE_ACCTS = ['Nequi','Daviplata','Nu','Efectivo'];
   let total = 0;
-  CUENTAS.forEach(a => total += acctBalance(a));
+  DISPONIBLE_ACCTS.forEach(a => total += acctBalance(a));
   const el = document.getElementById('bigBalance');
   el.textContent = fmt(total);
   el.className = 'amt ' + (total >= 0 ? 'pos' : 'neg');
+
+  const deuda = Math.abs(Math.min(0, acctBalance('Nu Tarjeta')));
+  document.getElementById('cardDebt').textContent = fmt(deuda);
+
+  const ahorro = acctBalance('Nu Cajitas');
+  document.getElementById('cajitasSave').textContent = fmt(ahorro);
 }
 
 function renderChips(){
@@ -402,6 +441,24 @@ async function saveEdit(id){
     statusEl.textContent = 'No se pudo guardar: ' + err.message;
   }
 }
+
+function forgetConfig(){
+  try{ localStorage.removeItem('finanzas_sheetId'); localStorage.removeItem('finanzas_scriptUrl'); }catch(e){}
+  document.getElementById('sheetId').value = '';
+  document.getElementById('scriptUrl').value = '';
+  document.getElementById('statusMsg').textContent = 'Datos guardados olvidados.';
+}
+
+function initFromStorage(){
+  try{
+    const sid = localStorage.getItem('finanzas_sheetId');
+    const url = localStorage.getItem('finanzas_scriptUrl');
+    if(sid){ document.getElementById('sheetId').value = sid; }
+    if(url){ document.getElementById('scriptUrl').value = url; }
+    if(sid){ loadData(); }
+  }catch(e){}
+}
+initFromStorage();
 </script>
 </body>
 </html>
